@@ -16,8 +16,18 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
     df["ema_20"] = ta.trend.EMAIndicator(df["close"], window=20).ema_indicator()
     df["ema_50"] = ta.trend.EMAIndicator(df["close"], window=50).ema_indicator()
 
-    latest = df.iloc[-1]
+   latest = df.iloc[-1]
     prev = df.iloc[-2]
+
+    vol_latest = float(latest["volume"])
+    vol_prev = float(prev["volume"])
+    
+    # Hindari division by zero
+    price_change = 0.0
+    if float(prev["close"]) != 0:
+        price_change = round(
+            (float(latest["close"]) - float(prev["close"])) / float(prev["close"]) * 100, 3
+        )
 
     return {
         "current_price": round(float(latest["close"]), 4),
@@ -29,9 +39,7 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
         "bb_lower": round(float(latest["bb_lower"]), 4),
         "ema_20": round(float(latest["ema_20"]), 4),
         "ema_50": round(float(latest["ema_50"]), 4),
-        "volume_latest": round(float(latest["volume"]), 2),
-        "volume_prev": round(float(prev["volume"]), 2),
-        "price_change_pct": round(
-            (float(latest["close"]) - float(prev["close"])) / float(prev["close"]) * 100, 3
-        ),
+        "volume_latest": vol_latest,
+        "volume_prev": vol_prev,
+        "price_change_pct": price_change,
     }
