@@ -1,67 +1,58 @@
 import requests
 import pandas as pd
-import time
 
-TIMEFRAME_MAP = {
-    "1m": "1", "5m": "5", "15m": "15",
-    "1h": "60", "4h": "240", "1d": "D",
-}
+BASE_URL = "https://api.binance.com/api/v3"
 
 SYMBOL_MAP = {
-    "BTC/USDT": "btcidr",
-    "ETH/USDT": "ethidr",
-    "BNB/USDT": "bnbidr",
-    "SOL/USDT": "solidr",
-    "XRP/USDT": "xrpidr",
-    "DOGE/USDT": "dogeidr",
-    "ADA/USDT": "adaidr",
-    "AVAX/USDT": "avaxidr",
-    "MATIC/USDT": "maticidr",
-    "LINK/USDT": "linkidr",
+    "BTC/USDT": "BTCUSDT",
+    "ETH/USDT": "ETHUSDT",
+    "BNB/USDT": "BNBUSDT",
+    "SOL/USDT": "SOLUSDT",
+    "XRP/USDT": "XRPUSDT",
+    "DOGE/USDT": "DOGEUSDT",
+    "ADA/USDT": "ADAUSDT",
+    "AVAX/USDT": "AVAXUSDT",
+    "MATIC/USDT": "MATICUSDT",
+    "LINK/USDT": "LINKUSDT",
 }
 
-SECONDS_MAP = {
-    "1m": 60, "5m": 300, "15m": 900,
-    "1h": 3600, "4h": 14400, "1d": 86400,
+TIMEFRAME_MAP = {
+    "1m": "1m", "5m": "5m", "15m": "15m",
+    "1h": "1h", "4h": "4h", "1d": "1d",
 }
 
 def get_ohlcv(symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
-    pair = SYMBOL_MAP.get(symbol, "btcidr")
-    resolution = TIMEFRAME_MAP.get(timeframe, "60")
-    seconds = SECONDS_MAP.get(timeframe, 3600)
+    binance_symbol = SYMBOL_MAP.get(symbol, "BTCUSDT")
+    interval = TIMEFRAME_MAP.get(timeframe, "1h")
 
-    to_time = int(time.time())
-    from_time = to_time - (limit * seconds)
-
-    url = "https://indodax.com/tradingview/history"
+    url = f"{BASE_URL}/klines"
     params = {
-        "symbol": pair.upper(),
-        "resolution": resolution,
-        "from": from_time,
-        "to": to_time,
+        "symbol": binance_symbol,
+        "interval": interval,
+        "limit": limit,
     }
 
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, params=params, headers=headers, timeout=15)
+    response = requests.get(url, params=params, timeout=15)
     response.raise_for_status()
     data = response.json()
 
-    if data.get("s") != "ok":
-        raise ValueError(f"Indodax API error: {data.get('s')} — {data}")
+    df = pd.DataFrame(data, columns=[
+        "timestamp", "open", "high", "low", "close", "volume",
+        "close_time", "quote_volume", "trades",
+        "taker_buy_base", "taker_buy_quote", "ignore"
+    ])
 
-    df = pd.DataFrame({
-        "timestamp": pd.to_datetime(data["t"], unit="s"),
-        "open": [float(x) for x in data["o"]],
-        "high": [float(x) for x in data["h"]],
-        "low":  [float(x) for x in data["l"]],
-        "close": [float(x) for x in data["c"]],
-        "volume": [float(x) for x in data["v"]],
-    })
-    return df
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+    df["open"]   = df["open"].astype(float)
+    df["high"]   = df["high"].astype(float)
+    df["low"]    = df["low"].astype(float)
+    df["close"]  = df["close"].astype(float)
+    df["volume"] = df["volume"].astype(float)
+
+    return df[["timestamp", "open", "high", "low", "close", "volume"]]
 
 def get_ticker(symbol: str) -> dict:
-    pair = SYMBOL_MAP.get(symbol, "btcidr")
-    url = f"https://indodax.com/api/ticker/{pair}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers, timeout=15)
+    binance_symbol = SYMBOL_MAP.get(symbol, "BTCUSDT")
+    url = f"{BASE_URL}/ticker/24hr"
+    response = requests.get(url, params={"symbol": binance_symbol}, timeout=15)
     return response.json()
