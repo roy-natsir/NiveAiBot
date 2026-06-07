@@ -1,7 +1,7 @@
 import requests
 import pandas as pd
 
-BASE_URL = "https://api.binance.com/api/v3"
+BASE_URL = "https://api.binance.us/api/v3"
 
 SYMBOL_MAP = {
     "BTC/USDT": "BTCUSDT",
