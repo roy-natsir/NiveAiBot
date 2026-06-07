@@ -3,7 +3,7 @@ import asyncio
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
-from market_data import get_ohlcv, get_ticker
+from market_data import get_ohlcv, get_ticker, search_coin
 from indicators import calculate_indicators
 from hermes_analyst import ask_hermes
 
