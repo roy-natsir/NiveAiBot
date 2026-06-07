@@ -35,7 +35,11 @@ def get_ticker(coin_id: str) -> dict:
     params = {"ids": coin_id, "vs_currencies": "usd", "include_24hr_change": "true"}
     response = requests.get(url, params=params, timeout=15)
     data = response.json()
+    
+    if coin_id not in data:
+        return {"lastPrice": "0", "priceChangePercent": "0"}
+    
     return {
-        "lastPrice": str(data[coin_id]["usd"]),
+        "lastPrice": str(data[coin_id].get("usd", 0)),
         "priceChangePercent": str(data[coin_id].get("usd_24h_change", 0))
     }
