@@ -1,58 +1,41 @@
 import requests
 import pandas as pd
 
-BASE_URL = "https://api.binance.us/api/v3"
-
-SYMBOL_MAP = {
-    "BTC/USDT": "BTCUSDT",
-    "ETH/USDT": "ETHUSDT",
-    "BNB/USDT": "BNBUSDT",
-    "SOL/USDT": "SOLUSDT",
-    "XRP/USDT": "XRPUSDT",
-    "DOGE/USDT": "DOGEUSDT",
-    "ADA/USDT": "ADAUSDT",
-    "AVAX/USDT": "AVAXUSDT",
-    "MATIC/USDT": "MATICUSDT",
-    "LINK/USDT": "LINKUSDT",
-}
+BASE_URL = "https://api.coingecko.com/api/v3"
 
 TIMEFRAME_MAP = {
-    "1m": "1m", "5m": "5m", "15m": "15m",
-    "1h": "1h", "4h": "4h", "1d": "1d",
+    "1h": 1, "4h": 1, "1d": 7, "1w": 30,
 }
 
-def get_ohlcv(symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
-    binance_symbol = SYMBOL_MAP.get(symbol, "BTCUSDT")
-    interval = TIMEFRAME_MAP.get(timeframe, "1h")
+def search_coin(query: str) -> tuple:
+    """Cari coin ID dari nama/symbol."""
+    url = f"{BASE_URL}/search"
+    response = requests.get(url, params={"query": query}, timeout=15)
+    data = response.json()
+    coins = data.get("coins", [])
+    if not coins:
+        return None, None
+    top = coins[0]
+    return top["id"], top["name"]
 
-    url = f"{BASE_URL}/klines"
-    params = {
-        "symbol": binance_symbol,
-        "interval": interval,
-        "limit": limit,
-    }
-
+def get_ohlcv(coin_id: str, timeframe: str, limit: int) -> pd.DataFrame:
+    days = TIMEFRAME_MAP.get(timeframe, 1)
+    url = f"{BASE_URL}/coins/{coin_id}/ohlc"
+    params = {"vs_currency": "usd", "days": days}
     response = requests.get(url, params=params, timeout=15)
     response.raise_for_status()
     data = response.json()
-
-    df = pd.DataFrame(data, columns=[
-        "timestamp", "open", "high", "low", "close", "volume",
-        "close_time", "quote_volume", "trades",
-        "taker_buy_base", "taker_buy_quote", "ignore"
-    ])
-
+    df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close"])
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-    df["open"]   = df["open"].astype(float)
-    df["high"]   = df["high"].astype(float)
-    df["low"]    = df["low"].astype(float)
-    df["close"]  = df["close"].astype(float)
-    df["volume"] = df["volume"].astype(float)
+    df["volume"] = 0.0
+    return df
 
-    return df[["timestamp", "open", "high", "low", "close", "volume"]]
-
-def get_ticker(symbol: str) -> dict:
-    binance_symbol = SYMBOL_MAP.get(symbol, "BTCUSDT")
-    url = f"{BASE_URL}/ticker/24hr"
-    response = requests.get(url, params={"symbol": binance_symbol}, timeout=15)
-    return response.json()
+def get_ticker(coin_id: str) -> dict:
+    url = f"{BASE_URL}/simple/price"
+    params = {"ids": coin_id, "vs_currencies": "usd", "include_24hr_change": "true"}
+    response = requests.get(url, params=params, timeout=15)
+    data = response.json()
+    return {
+        "lastPrice": str(data[coin_id]["usd"]),
+        "priceChangePercent": str(data[coin_id].get("usd_24h_change", 0))
+    }

@@ -32,24 +32,26 @@ COIN_MAP = {
     "link": "LINK/USDT",
 }
 
-def parse_message(text: str):
-    text = text.lower()
-
-    # Deteksi symbol
-    symbol = None
-    for key, val in COIN_MAP.items():
-        if key in text:
-            symbol = val
-            break
-
+def parse_message(text: str) -> tuple:
+    text_lower = text.lower()
+    
+    # Hapus kata-kata umum
+    stop_words = ["analisa", "analisis", "cek", "sinyal", "signal", "coin", "token"]
+    words = text_lower.split()
+    words = [w for w in words if w not in stop_words]
+    
     # Deteksi timeframe
-    timeframe = "1h"  # default
-    for key, val in TIMEFRAME_MAP.items():
-        if key in text:
+    timeframe = "1h"
+    timeframe_words = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h", 
+                      "4h": "4h", "1d": "1d", "hari ini": "1d", "harian": "1d"}
+    for key, val in timeframe_words.items():
+        if key in text_lower:
             timeframe = val
+            words = [w for w in words if w != key]
             break
 
-    return symbol, timeframe
+    query = " ".join(words).strip()
+    return query, timeframe
 
 def format_signal(symbol: str, timeframe: str, indicators: dict, analysis: dict) -> str:
     if "error" in analysis:
@@ -94,43 +96,41 @@ _Bukan financial advice. DYOR._
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
-    # Cek apakah user diizinkan
     if user_id != ALLOWED_USER_ID:
         await update.message.reply_text("⛔ Akses ditolak.")
         return
 
     text = update.message.text
-    symbol, timeframe = parse_message(text)
+    query, timeframe = parse_message(text)
 
-    if not symbol:
+    if not query:
         await update.message.reply_text(
-            "❓ Coin tidak dikenali.\n\n"
-            "Contoh perintah:\n"
-            "• analisa btc\n"
-            "• analisa eth 4h\n"
-            "• sinyal solana hari ini\n"
-            "• cek bnb 1h"
+            "❓ Ketik nama coin yang ingin dianalisa.\n\n"
+            "Contoh:\n• analisa bitcoin\n• cek solana 4h\n• sinyal pepe"
         )
         return
 
-    # Kirim pesan loading
-    loading_msg = await update.message.reply_text(
-        f"⏳ Menganalisa {symbol} ({timeframe})..."
-    )
+    loading_msg = await update.message.reply_text(f"⏳ Mencari {query}...")
 
     try:
-        df = get_ohlcv(symbol, timeframe, 100)
+        coin_id, coin_name = search_coin(query)
+        if not coin_id:
+            await loading_msg.edit_text(f"❌ Coin '{query}' tidak ditemukan di CoinGecko.")
+            return
+
+        await loading_msg.edit_text(f"⏳ Menganalisa {coin_name} ({timeframe})...")
+        df = get_ohlcv(coin_id, timeframe, 100)
         indicators = calculate_indicators(df)
-        analysis = ask_hermes(symbol, timeframe, indicators)
-        result = format_signal(symbol, timeframe, indicators, analysis)
+        ticker = get_ticker(coin_id)
+        live_price = float(ticker.get("lastPrice", indicators["current_price"]))
+        analysis = ask_hermes(coin_id.upper()+"/USDT", timeframe, indicators)
+        result = format_signal(coin_name, timeframe, indicators, analysis, live_price)
 
         await loading_msg.delete()
         await update.message.reply_text(result, parse_mode="Markdown")
 
     except Exception as e:
-        await loading_msg.delete()
-        await update.message.reply_text(f"❌ Error: {str(e)}")
+        await loading_msg.edit_text(f"❌ Error: {str(e)}")
 
 def main():
     print("🤖 Trading Signal Bot started...")
