@@ -2,14 +2,14 @@ import time
 from config import TRADING_PAIRS, TIMEFRAME, CANDLE_LIMIT, SCAN_INTERVAL
 from market_data import get_ohlcv
 from indicators import calculate_indicators
-from hermes_analyst import ask_hermes
+from niveai_analyst import ask_niveai
 from dashboard import print_signal
 
 def analyze_pair(symbol: str):
     print(f"  → Fetching {symbol}...")
     df = get_ohlcv(symbol, TIMEFRAME, CANDLE_LIMIT)
     indicators = calculate_indicators(df)
-    analysis = ask_hermes(symbol, TIMEFRAME, indicators)
+    analysis = ask_niveai(symbol, TIMEFRAME, indicators)
     print_signal(symbol, TIMEFRAME, indicators, analysis)
 
 def main():

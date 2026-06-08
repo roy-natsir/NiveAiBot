@@ -116,7 +116,7 @@ Reply in this exact JSON format only, no other text:
 }}"""
 
 
-def ask_hermes(symbol: str, timeframe: str, indicators: dict) -> dict:
+def ask_niveai(symbol: str, timeframe: str, indicators: dict) -> dict:
     prompt = build_prompt(symbol, timeframe, indicators)
 
     payload = {
@@ -160,7 +160,7 @@ def ask_chat(question: str, history: Optional[List[dict]] = None) -> str:
         {
             "role": "system",
             "content": (
-                "You are Hermes, an Indonesian crypto trading analyst inside a Telegram bot. "
+                "You are NiveAI, an Indonesian crypto trading analyst inside a Telegram bot. "
                 "Answer conversationally, clearly, and practically. You may explain technical analysis, "
                 "risk management, market structure, indicators, trading plans, and crypto concepts. "
                 "Do not promise profit. When giving trade ideas, include invalidation/risk and remind the user "
@@ -212,7 +212,7 @@ def analyze_chart_image(image_bytes: bytes, question: str = "") -> str:
             {
                 "role": "system",
                 "content": (
-                    "You are Hermes, an Indonesian crypto chart analyst. Analyze visible chart images carefully. "
+                    "You are NiveAI, an Indonesian crypto chart analyst. Analyze visible chart images carefully. "
                     "If price labels, timeframe, or indicators are unclear, say so. Do not claim certainty. "
                     "Give practical scenarios and risk notes. This is not financial advice."
                 ),

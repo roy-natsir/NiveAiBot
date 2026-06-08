@@ -8,7 +8,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from hermes_analyst import analyze_chart_image, ask_chat, ask_hermes
+from niveai_analyst import analyze_chart_image, ask_chat, ask_niveai
 from indicators import calculate_indicators
 from market_data import CoinGeckoRateLimitError, get_ohlcv, get_ticker, search_coin
 
@@ -369,7 +369,7 @@ async def chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Contoh: /chat apa itu RSI dan MACD?")
         return
 
-    loading_msg = await update.message.reply_text("Hermes sedang berpikir...")
+    loading_msg = await update.message.reply_text("NiveAI sedang berpikir...")
     history = context.user_data.get("chat_history", [])
     answer = ask_chat(question, history=history)
     remember_chat(context, question, answer)
@@ -391,7 +391,7 @@ async def analyze_query(update: Update, query: str, timeframe: str):
         df = get_ohlcv(coin_id, timeframe, 100)
         indicators = calculate_indicators(df)
         indicators = apply_live_price(indicators, get_ticker(coin_id))
-        analysis = ask_hermes(f"{coin_id.upper()}/USDT", timeframe, indicators)
+        analysis = ask_niveai(f"{coin_id.upper()}/USDT", timeframe, indicators)
         result = format_signal(coin_name, timeframe, indicators, analysis)
 
         await loading_msg.delete()
@@ -467,7 +467,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await analyze_query(update, coin_query_from_text(text, query), timeframe)
         return
 
-    loading_msg = await update.message.reply_text("Hermes sedang berpikir...")
+    loading_msg = await update.message.reply_text("NiveAI sedang berpikir...")
     history = context.user_data.get("chat_history", [])
     answer = ask_chat(text, history=history)
     remember_chat(context, text, answer)
