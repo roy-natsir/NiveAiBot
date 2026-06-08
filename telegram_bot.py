@@ -1,98 +1,127 @@
+import html
 import os
-import asyncio
+import re
+from typing import Optional, Tuple
+
 from dotenv import load_dotenv
 from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
-from market_data import CoinGeckoRateLimitError, get_ohlcv, get_ticker, search_coin
-from indicators import calculate_indicators
+from telegram.constants import ParseMode
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+
 from hermes_analyst import ask_hermes
+from indicators import calculate_indicators
+from market_data import CoinGeckoRateLimitError, get_ohlcv, get_ticker, search_coin
 
 load_dotenv()
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID"))
+ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", "0"))
 
-TIMEFRAME_MAP = {
-    "1m": "1m", "5m": "5m", "15m": "15m",
-    "1h": "1h", "4h": "4h", "1d": "1d",
-    "hari ini": "1d", "harian": "1d",
-    "1 jam": "1h", "4 jam": "4h",
+DEFAULT_TIMEFRAME = "1h"
+SUPPORTED_TIMEFRAMES = ("1h", "4h", "1d", "1w")
+TIMEFRAME_ALIASES = {
+    "1h": "1h",
+    "1 jam": "1h",
+    "1j": "1h",
+    "jam": "1h",
+    "4h": "4h",
+    "4 jam": "4h",
+    "4j": "4h",
+    "1d": "1d",
+    "1 day": "1d",
+    "daily": "1d",
+    "hari ini": "1d",
+    "harian": "1d",
+    "1w": "1w",
+    "1 week": "1w",
+    "weekly": "1w",
+    "mingguan": "1w",
 }
 
-COIN_MAP = {
-    "btc": "BTC/USDT", "bitcoin": "BTC/USDT",
-    "eth": "ETH/USDT", "ethereum": "ETH/USDT",
-    "bnb": "BNB/USDT",
-    "sol": "SOL/USDT", "solana": "SOL/USDT",
-    "xrp": "XRP/USDT",
-    "doge": "DOGE/USDT", "dogecoin": "DOGE/USDT",
-    "ada": "ADA/USDT", "cardano": "ADA/USDT",
-    "avax": "AVAX/USDT",
-    "matic": "MATIC/USDT", "polygon": "MATIC/USDT",
-    "link": "LINK/USDT",
+STOP_WORDS = {
+    "analisa",
+    "analisis",
+    "analyze",
+    "cek",
+    "check",
+    "sinyal",
+    "signal",
+    "coin",
+    "token",
+    "harga",
+    "price",
+    "prediksi",
 }
 
-def parse_message(text: str) -> tuple:
-    text_lower = text.lower()
-    
-    # Hapus kata-kata umum
-    stop_words = ["analisa", "analisis", "cek", "sinyal", "signal", "coin", "token"]
-    words = text_lower.split()
-    words = [w for w in words if w not in stop_words]
-    
-    # Deteksi timeframe
-    timeframe = "1h"
-    timeframe_words = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h", 
-                      "4h": "4h", "1d": "1d", "hari ini": "1d", "harian": "1d"}
-    for key, val in timeframe_words.items():
-        if key in text_lower:
-            timeframe = val
-            words = [w for w in words if w != key]
+COMMON_COINS = {
+    "btc": ("bitcoin", "Bitcoin"),
+    "bitcoin": ("bitcoin", "Bitcoin"),
+    "eth": ("ethereum", "Ethereum"),
+    "ethereum": ("ethereum", "Ethereum"),
+    "bnb": ("binancecoin", "BNB"),
+    "sol": ("solana", "Solana"),
+    "solana": ("solana", "Solana"),
+    "xrp": ("ripple", "XRP"),
+    "doge": ("dogecoin", "Dogecoin"),
+    "dogecoin": ("dogecoin", "Dogecoin"),
+    "ada": ("cardano", "Cardano"),
+    "cardano": ("cardano", "Cardano"),
+    "avax": ("avalanche-2", "Avalanche"),
+    "avalanche": ("avalanche-2", "Avalanche"),
+    "matic": ("matic-network", "Polygon"),
+    "polygon": ("matic-network", "Polygon"),
+    "pol": ("polygon-ecosystem-token", "Polygon Ecosystem Token"),
+    "link": ("chainlink", "Chainlink"),
+    "pepe": ("pepe", "Pepe"),
+    "shib": ("shiba-inu", "Shiba Inu"),
+    "shiba": ("shiba-inu", "Shiba Inu"),
+}
+
+
+def is_allowed(update: Update) -> bool:
+    return bool(update.effective_user and update.effective_user.id == ALLOWED_USER_ID)
+
+
+async def reject_if_unauthorized(update: Update) -> bool:
+    if is_allowed(update):
+        return False
+    if update.message:
+        await update.message.reply_text("Akses ditolak.")
+    return True
+
+
+def normalize_query(query: str) -> str:
+    query = query.lower().strip()
+    query = query.replace("$", "")
+    query = re.sub(r"\b(usdt|usd|busd|usdc)\b", " ", query)
+    query = re.sub(r"[/_-]", " ", query)
+    query = re.sub(r"\s+", " ", query)
+    return query.strip()
+
+
+def parse_message(text: str) -> Tuple[str, str]:
+    text_lower = normalize_query(text)
+    timeframe = DEFAULT_TIMEFRAME
+
+    for alias, value in sorted(TIMEFRAME_ALIASES.items(), key=lambda item: len(item[0]), reverse=True):
+        if re.search(rf"\b{re.escape(alias)}\b", text_lower):
+            timeframe = value
+            text_lower = re.sub(rf"\b{re.escape(alias)}\b", " ", text_lower)
             break
 
+    words = [word for word in text_lower.split() if word not in STOP_WORDS]
     query = " ".join(words).strip()
     return query, timeframe
 
-def format_signal(symbol: str, timeframe: str, indicators: dict, analysis: dict) -> str:
-    if "error" in analysis:
-        return f"❌ Error analisa: {analysis['error']}"
 
-    signal = analysis.get("signal", "?")
-    confidence = analysis.get("confidence", "?")
-    reason = analysis.get("reason", "-")
-    risk = analysis.get("key_risk", "-")
+def format_number(value: float, decimals: int = 6) -> str:
+    value = float(value)
+    if value >= 100:
+        return f"{value:,.2f}"
+    if value >= 1:
+        return f"{value:,.4f}"
+    return f"{value:,.{decimals}f}".rstrip("0").rstrip(".")
 
-    signal_emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(signal, "⚪")
-    conf_emoji = {"High": "🔥", "Medium": "✅", "Low": "⚠️"}.get(confidence, "")
-
-    price_change = indicators['price_change_pct']
-    change_emoji = "📈" if price_change > 0 else "📉"
-
-    return f"""
-📊 *Analisa {symbol}* | `{timeframe}`
-━━━━━━━━━━━━━━━━━━━━
-
-💰 *Harga*: `{indicators['current_price']}` {change_emoji} `{'+' if price_change > 0 else ''}{price_change}%`
-
-📉 *Indikator Teknikal*
-- RSI (14): `{indicators['rsi']}`
-- MACD: `{indicators['macd']}`
-- MACD Signal: `{indicators['macd_signal']}`
-- MACD Histogram: `{indicators['macd_histogram']}`
-- EMA 20: `{indicators['ema_20']}`
-- EMA 50: `{indicators['ema_50']}`
-- BB Upper: `{indicators['bb_upper']}`
-- BB Lower: `{indicators['bb_lower']}`
-- Volume: `{indicators['volume_latest']}` (prev: `{indicators['volume_prev']}`)
-
-🤖 *Sinyal AI*
-- Signal: {signal_emoji} *{signal}*
-- Confidence: {conf_emoji} `{confidence}`
-- Alasan: _{reason}_
-- Key Risk: _{risk}_
-━━━━━━━━━━━━━━━━━━━━
-_Bukan financial advice. DYOR._
-"""
 
 def apply_live_price(indicators: dict, ticker: dict) -> dict:
     live_price = float(ticker.get("lastPrice", 0) or 0)
@@ -105,55 +134,206 @@ def apply_live_price(indicators: dict, ticker: dict) -> dict:
 
     return indicators
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ALLOWED_USER_ID:
-        await update.message.reply_text("⛔ Akses ditolak.")
+
+def resolve_common_coin(query: str) -> Tuple[Optional[str], Optional[str]]:
+    key = normalize_query(query)
+    if key in COMMON_COINS:
+        return COMMON_COINS[key]
+    return None, None
+
+
+def resolve_coin(query: str) -> Tuple[Optional[str], Optional[str]]:
+    coin_id, coin_name = resolve_common_coin(query)
+    if coin_id:
+        return coin_id, coin_name
+    return search_coin(query)
+
+
+def format_price(symbol: str, ticker: dict) -> str:
+    price = float(ticker.get("lastPrice", 0) or 0)
+    change = float(ticker.get("priceChangePercent", 0) or 0)
+    sign = "+" if change > 0 else ""
+
+    return (
+        f"<b>{html.escape(symbol)}</b>\n"
+        f"Harga live: <code>${format_number(price)}</code>\n"
+        f"Perubahan 24h: <code>{sign}{round(change, 3)}%</code>\n"
+        "Source: CoinGecko simple/price"
+    )
+
+
+def format_signal(symbol: str, timeframe: str, indicators: dict, analysis: dict) -> str:
+    if "error" in analysis:
+        return f"Error analisa: {html.escape(str(analysis['error']))}"
+
+    signal = html.escape(str(analysis.get("signal", "?")))
+    confidence = html.escape(str(analysis.get("confidence", "?")))
+    reason = html.escape(str(analysis.get("reason", "-")))
+    risk = html.escape(str(analysis.get("key_risk", "-")))
+
+    price_change = float(indicators["price_change_pct"])
+    sign = "+" if price_change > 0 else ""
+
+    return f"""
+<b>Analisa {html.escape(symbol)}</b> | <code>{html.escape(timeframe)}</code>
+
+<b>Harga live</b>: <code>${format_number(indicators['current_price'])}</code> <code>{sign}{price_change}%</code>
+<b>Source</b>: CoinGecko simple/price
+
+<b>Indikator teknikal</b>
+RSI (14): <code>{indicators['rsi']}</code>
+MACD: <code>{indicators['macd']}</code>
+MACD Signal: <code>{indicators['macd_signal']}</code>
+MACD Histogram: <code>{indicators['macd_histogram']}</code>
+EMA 20: <code>{indicators['ema_20']}</code>
+EMA 50: <code>{indicators['ema_50']}</code>
+BB Upper: <code>{indicators['bb_upper']}</code>
+BB Lower: <code>{indicators['bb_lower']}</code>
+
+<b>Sinyal AI</b>
+Signal: <b>{signal}</b>
+Confidence: <code>{confidence}</code>
+Alasan: <i>{reason}</i>
+Key Risk: <i>{risk}</i>
+
+<i>Bukan financial advice. DYOR.</i>
+""".strip()
+
+
+def help_text() -> str:
+    return """
+<b>Trading Signal Bot</b>
+
+Kirim nama coin untuk analisa:
+<code>analisa bitcoin</code>
+<code>cek solana 4h</code>
+<code>sinyal pepe 1d</code>
+
+Command:
+<code>/price btc</code> - harga live dan perubahan 24h
+<code>/analyze btc 4h</code> - analisa teknikal + AI
+<code>/timeframes</code> - timeframe yang tersedia
+<code>/help</code> - bantuan
+
+Timeframe: <code>1h</code>, <code>4h</code>, <code>1d</code>, <code>1w</code>
+""".strip()
+
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_unauthorized(update):
+        return
+    await update.message.reply_text(help_text(), parse_mode=ParseMode.HTML)
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_unauthorized(update):
+        return
+    await update.message.reply_text(help_text(), parse_mode=ParseMode.HTML)
+
+
+async def timeframes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_unauthorized(update):
+        return
+    await update.message.reply_text(
+        "Timeframe tersedia: 1h, 4h, 1d, 1w\nDefault: 1h",
+    )
+
+
+async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_unauthorized(update):
         return
 
-    text = update.message.text
-    query, timeframe = parse_message(text)
-
+    query = normalize_query(" ".join(context.args))
     if not query:
-        await update.message.reply_text(
-            "❓ Ketik nama coin yang ingin dianalisa.\n\n"
-            "Contoh:\n• analisa bitcoin\n• cek solana 4h\n• sinyal pepe"
-        )
+        await update.message.reply_text("Contoh: /price btc")
         return
 
-    loading_msg = await update.message.reply_text(f"⏳ Mencari {query}...")
+    loading_msg = await update.message.reply_text(f"Mencari harga {query}...")
 
     try:
-        coin_id, coin_name = search_coin(query)
+        coin_id, coin_name = resolve_coin(query)
         if not coin_id:
-            await loading_msg.edit_text(f"❌ Coin '{query}' tidak ditemukan di CoinGecko.")
+            await loading_msg.edit_text(f"Coin '{query}' tidak ditemukan di CoinGecko.")
             return
 
-        await loading_msg.edit_text(f"⏳ Menganalisa {coin_name} ({timeframe})...")
+        ticker = get_ticker(coin_id)
+        await loading_msg.edit_text(format_price(coin_name, ticker), parse_mode=ParseMode.HTML)
+    except CoinGeckoRateLimitError as exc:
+        await loading_msg.edit_text(str(exc))
+    except Exception as exc:
+        await loading_msg.edit_text(f"Error: {exc}")
+
+
+async def analyze_query(update: Update, query: str, timeframe: str):
+    loading_msg = await update.message.reply_text(f"Mencari {query}...")
+
+    try:
+        coin_id, coin_name = resolve_coin(query)
+        if not coin_id:
+            await loading_msg.edit_text(f"Coin '{query}' tidak ditemukan di CoinGecko.")
+            return
+
+        await loading_msg.edit_text(f"Menganalisa {coin_name} ({timeframe})...")
         df = get_ohlcv(coin_id, timeframe, 100)
         indicators = calculate_indicators(df)
-        ticker = get_ticker(coin_id)
-        indicators = apply_live_price(indicators, ticker)
-        analysis = ask_hermes(coin_id.upper()+"/USDT", timeframe, indicators)
+        indicators = apply_live_price(indicators, get_ticker(coin_id))
+        analysis = ask_hermes(f"{coin_id.upper()}/USDT", timeframe, indicators)
         result = format_signal(coin_name, timeframe, indicators, analysis)
 
         await loading_msg.delete()
-        await update.message.reply_text(result, parse_mode="Markdown")
+        await update.message.reply_text(result, parse_mode=ParseMode.HTML)
+    except CoinGeckoRateLimitError as exc:
+        await loading_msg.edit_text(str(exc))
+    except Exception as exc:
+        await loading_msg.edit_text(f"Error: {exc}")
 
-    except CoinGeckoRateLimitError as e:
-        await loading_msg.edit_text(f"âš ï¸ {str(e)}")
-    except Exception as e:
-        await loading_msg.edit_text(f"❌ Error: {str(e)}")
+
+async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_unauthorized(update):
+        return
+
+    query, timeframe = parse_message(" ".join(context.args))
+    if not query:
+        await update.message.reply_text("Contoh: /analyze btc 4h")
+        return
+
+    await analyze_query(update, query, timeframe)
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_unauthorized(update):
+        return
+
+    text = update.message.text or ""
+    query, timeframe = parse_message(text)
+
+    if not query:
+        await update.message.reply_text(help_text(), parse_mode=ParseMode.HTML)
+        return
+
+    await analyze_query(update, query, timeframe)
+
 
 def main():
-    print("🤖 Trading Signal Bot started...")
+    if not TOKEN:
+        raise RuntimeError("TELEGRAM_TOKEN belum diisi di .env")
+    if not ALLOWED_USER_ID:
+        raise RuntimeError("ALLOWED_USER_ID belum diisi di .env")
+
+    print("Trading Signal Bot started...")
     print("Kirim pesan ke bot Telegram kamu untuk mulai analisa.")
 
     app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("timeframes", timeframes_command))
+    app.add_handler(CommandHandler("price", price_command))
+    app.add_handler(CommandHandler("analyze", analyze_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("✅ Bot berjalan. Tekan Ctrl+C untuk stop.")
+    print("Bot berjalan. Tekan Ctrl+C untuk stop.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
+
 
 if __name__ == "__main__":
     main()
