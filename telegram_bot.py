@@ -1,6 +1,7 @@
 import html
 import os
 import re
+from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 from dotenv import load_dotenv
@@ -200,6 +201,16 @@ def change_emoji(value: float) -> str:
     return "😮‍💨"
 
 
+def format_updated_at(timestamp) -> str:
+    if not timestamp:
+        return "unknown"
+    try:
+        updated_at = datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
+        return "unknown"
+    return updated_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
 def resolve_common_coin(query: str) -> Tuple[Optional[str], Optional[str]]:
     key = normalize_query(query)
     if key in COMMON_COINS:
@@ -290,10 +301,12 @@ async def send_ai_text(message, text: str) -> None:
 def format_price_snapshot(coin_name: str, symbol: str, summary: dict) -> str:
     price = float(summary.get("lastPrice", 0) or 0)
     changes = summary.get("changes", {})
+    updated_at = format_updated_at(summary.get("lastUpdatedAt"))
 
     lines = [
         f"<b>{html.escape(coin_name)} ${html.escape(symbol)}</b>",
         f"Harga <code>${format_number(price)}</code>",
+        f"Update <code>{html.escape(updated_at)}</code>",
     ]
 
     for label in ("24H", "15m", "1h", "4h", "1D", "7D"):
@@ -368,7 +381,7 @@ async def send_price_snapshot(update: Update, query: str):
             await loading_msg.edit_text(f"Coin '{query}' tidak ditemukan di CoinGecko.")
             return
 
-        summary = get_price_summary(coin_id)
+        summary = get_price_summary(coin_id, force_live=True)
         symbol = display_symbol(query, coin_id, coin_name)
         await loading_msg.edit_text(
             format_price_snapshot(coin_name, symbol, summary),

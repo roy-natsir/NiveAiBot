@@ -13,7 +13,7 @@ TIMEFRAME_MAP = {
 
 SEARCH_CACHE_TTL = 60 * 60 * 24
 OHLCV_CACHE_TTL = 60 * 5
-TICKER_CACHE_TTL = 15
+TICKER_CACHE_TTL = 5
 MARKET_CHART_1D_CACHE_TTL = 60
 MARKET_CHART_7D_CACHE_TTL = 60 * 5
 MAX_RETRIES = 3
@@ -59,10 +59,11 @@ def _retry_after_seconds(value: Optional[str]) -> Optional[float]:
         return None
 
 
-def _request_json(path: str, params: dict, cache_key: tuple, cache_ttl: int):
-    cached = _get_cached(cache_key, cache_ttl)
-    if cached is not None:
-        return cached
+def _request_json(path: str, params: dict, cache_key: tuple, cache_ttl: int, force_refresh: bool = False):
+    if not force_refresh:
+        cached = _get_cached(cache_key, cache_ttl)
+        if cached is not None:
+            return cached
 
     url = f"{BASE_URL}{path}"
     last_error = None
@@ -137,21 +138,28 @@ def get_ohlcv(coin_id: str, timeframe: str, limit: int) -> pd.DataFrame:
         df = df.tail(limit)
     return df
 
-def get_ticker(coin_id: str) -> dict:
-    params = {"ids": coin_id, "vs_currencies": "usd", "include_24hr_change": "true"}
+def get_ticker(coin_id: str, force_refresh: bool = False) -> dict:
+    params = {
+        "ids": coin_id,
+        "vs_currencies": "usd",
+        "include_24hr_change": "true",
+        "include_last_updated_at": "true",
+    }
     data = _request_json(
         "/simple/price",
         params,
         ("ticker", coin_id),
         TICKER_CACHE_TTL,
+        force_refresh=force_refresh,
     )
     
     if coin_id not in data:
-        return {"lastPrice": "0", "priceChangePercent": "0"}
+        return {"lastPrice": "0", "priceChangePercent": "0", "lastUpdatedAt": None}
     
     return {
         "lastPrice": str(data[coin_id].get("usd", 0)),
-        "priceChangePercent": str(data[coin_id].get("usd_24h_change", 0))
+        "priceChangePercent": str(data[coin_id].get("usd_24h_change", 0)),
+        "lastUpdatedAt": data[coin_id].get("last_updated_at"),
     }
 
 
@@ -183,8 +191,8 @@ def get_market_chart_prices(coin_id: str, days: int) -> list:
     return data.get("prices", [])
 
 
-def get_price_summary(coin_id: str) -> dict:
-    ticker = get_ticker(coin_id)
+def get_price_summary(coin_id: str, force_live: bool = False) -> dict:
+    ticker = get_ticker(coin_id, force_refresh=force_live)
     current_price = float(ticker.get("lastPrice", 0) or 0)
 
     prices_1d = get_market_chart_prices(coin_id, 1)
@@ -217,5 +225,6 @@ def get_price_summary(coin_id: str) -> dict:
 
     return {
         "lastPrice": current_price,
+        "lastUpdatedAt": ticker.get("lastUpdatedAt"),
         "changes": changes,
     }
