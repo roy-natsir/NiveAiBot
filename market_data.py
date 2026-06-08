@@ -14,6 +14,8 @@ TIMEFRAME_MAP = {
 SEARCH_CACHE_TTL = 60 * 60 * 24
 OHLCV_CACHE_TTL = 60 * 5
 TICKER_CACHE_TTL = 15
+MARKET_CHART_1D_CACHE_TTL = 60
+MARKET_CHART_7D_CACHE_TTL = 60 * 5
 MAX_RETRIES = 3
 
 _session = requests.Session()
@@ -150,4 +152,66 @@ def get_ticker(coin_id: str) -> dict:
     return {
         "lastPrice": str(data[coin_id].get("usd", 0)),
         "priceChangePercent": str(data[coin_id].get("usd_24h_change", 0))
+    }
+
+
+def _price_before(prices: list, target_ms: int):
+    if not prices:
+        return None
+
+    for timestamp, price in reversed(prices):
+        if int(timestamp) <= target_ms:
+            return float(price)
+
+    return float(prices[0][1])
+
+
+def _percent_change(current_price: float, past_price) -> float:
+    if past_price is None or past_price <= 0:
+        return 0.0
+    return round((current_price - past_price) / past_price * 100, 3)
+
+
+def get_market_chart_prices(coin_id: str, days: int) -> list:
+    ttl = MARKET_CHART_1D_CACHE_TTL if days <= 1 else MARKET_CHART_7D_CACHE_TTL
+    data = _request_json(
+        f"/coins/{coin_id}/market_chart",
+        {"vs_currency": "usd", "days": days},
+        ("market_chart", coin_id, days),
+        ttl,
+    )
+    return data.get("prices", [])
+
+
+def get_price_summary(coin_id: str) -> dict:
+    ticker = get_ticker(coin_id)
+    current_price = float(ticker.get("lastPrice", 0) or 0)
+
+    prices_1d = get_market_chart_prices(coin_id, 1)
+    prices_7d = get_market_chart_prices(coin_id, 7)
+    latest_timestamp = int(prices_1d[-1][0]) if prices_1d else int(time.time() * 1000)
+
+    changes = {
+        "15m": _percent_change(
+            current_price,
+            _price_before(prices_1d, latest_timestamp - 15 * 60 * 1000),
+        ),
+        "1h": _percent_change(
+            current_price,
+            _price_before(prices_1d, latest_timestamp - 60 * 60 * 1000),
+        ),
+        "4h": _percent_change(
+            current_price,
+            _price_before(prices_1d, latest_timestamp - 4 * 60 * 60 * 1000),
+        ),
+        "1D": round(float(ticker.get("priceChangePercent", 0) or 0), 3),
+        "7D": _percent_change(
+            current_price,
+            _price_before(prices_7d, latest_timestamp - 7 * 24 * 60 * 60 * 1000),
+        ),
+    }
+
+    return {
+        "lastPrice": current_price,
+        "changes": changes,
     }
