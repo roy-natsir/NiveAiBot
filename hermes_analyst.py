@@ -46,11 +46,14 @@ def build_prompt(symbol: str, timeframe: str, indicators: dict) -> str:
         else "WITHIN BANDS"
     )
 
-    vol_condition = (
-        f"INCREASING ({round((vol_now/vol_prev - 1)*100, 1)}% higher than previous)"
-        if vol_now > vol_prev
-        else f"DECREASING ({round((1 - vol_now/vol_prev)*100, 1)}% lower than previous)"
-    )
+    if vol_prev <= 0:
+        vol_condition = "UNAVAILABLE (CoinGecko OHLC endpoint does not provide volume)"
+    else:
+        vol_condition = (
+            f"INCREASING ({round((vol_now/vol_prev - 1)*100, 1)}% higher than previous)"
+            if vol_now > vol_prev
+            else f"DECREASING ({round((1 - vol_now/vol_prev)*100, 1)}% lower than previous)"
+        )
 
     return f"""You are a strict crypto trading analyst. Base your analysis ONLY on the pre-calculated conditions below. Do NOT invent or assume any conditions not listed here.
 
