@@ -1,13 +1,40 @@
-import requests
+import base64
 import json
 import os
+from typing import Dict, List, Optional
+
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_CHAT_MODEL = os.getenv("GROQ_CHAT_MODEL", GROQ_MODEL)
+GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+
+def _headers() -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+
+def _extract_content(response: requests.Response) -> str:
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"].strip()
+
+
+def _post_chat_completion(payload: dict, timeout: int = 30) -> str:
+    response = requests.post(
+        GROQ_URL,
+        headers=_headers(),
+        json=payload,
+        timeout=timeout,
+    )
+    return _extract_content(response)
 
 def build_prompt(symbol: str, timeframe: str, indicators: dict) -> str:
     rsi = indicators["rsi"]
@@ -92,11 +119,6 @@ Reply in this exact JSON format only, no other text:
 def ask_hermes(symbol: str, timeframe: str, indicators: dict) -> dict:
     prompt = build_prompt(symbol, timeframe, indicators)
 
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
     payload = {
         "model": GROQ_MODEL,
         "messages": [
@@ -114,14 +136,7 @@ def ask_hermes(symbol: str, timeframe: str, indicators: dict) -> dict:
     }
 
     try:
-        response = requests.post(
-            GROQ_URL,
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
-        response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+        content = _post_chat_completion(payload, timeout=30)
 
         content = content.strip()
         if content.startswith("```"):
@@ -138,3 +153,90 @@ def ask_hermes(symbol: str, timeframe: str, indicators: dict) -> dict:
         return {"error": f"Response bukan JSON valid: {content[:150]}"}
     except Exception as e:
         return {"error": str(e)}
+
+
+def ask_chat(question: str, history: Optional[List[dict]] = None) -> str:
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are Hermes, an Indonesian crypto trading analyst inside a Telegram bot. "
+                "Answer conversationally, clearly, and practically. You may explain technical analysis, "
+                "risk management, market structure, indicators, trading plans, and crypto concepts. "
+                "Do not promise profit. When giving trade ideas, include invalidation/risk and remind the user "
+                "that it is not financial advice. Keep answers concise unless the user asks for depth."
+            ),
+        }
+    ]
+
+    if history:
+        messages.extend(history[-8:])
+
+    messages.append({"role": "user", "content": question})
+
+    payload = {
+        "model": GROQ_CHAT_MODEL,
+        "messages": messages,
+        "temperature": 0.4,
+        "max_tokens": 700,
+    }
+
+    try:
+        return _post_chat_completion(payload, timeout=30)
+    except requests.exceptions.ConnectionError:
+        return "Groq API tidak bisa diakses. Cek koneksi internet."
+    except Exception as e:
+        return f"Error AI chat: {e}"
+
+
+def analyze_chart_image(image_bytes: bytes, question: str = "") -> str:
+    if not GROQ_VISION_MODEL:
+        return (
+            "Mode analisa chart gambar belum aktif. Isi GROQ_VISION_MODEL di .env "
+            "dengan model vision Groq yang tersedia, lalu restart bot."
+        )
+
+    prompt = question.strip() or (
+        "Analisa chart ini. Jelaskan trend, support/resistance yang terlihat, momentum, "
+        "skenario bullish/bearish, invalidation, dan risk management. Jangan mengarang angka "
+        "yang tidak terlihat jelas dari gambar."
+    )
+
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    if len(encoded) > 4 * 1024 * 1024:
+        return "Gambar terlalu besar untuk Groq Vision. Kirim screenshot chart yang lebih kecil/terkompres."
+
+    payload = {
+        "model": GROQ_VISION_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are Hermes, an Indonesian crypto chart analyst. Analyze visible chart images carefully. "
+                    "If price labels, timeframe, or indicators are unclear, say so. Do not claim certainty. "
+                    "Give practical scenarios and risk notes. This is not financial advice."
+                ),
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{encoded}",
+                        },
+                    },
+                ],
+            },
+        ],
+        "temperature": 0.2,
+        "max_tokens": 900,
+    }
+
+    try:
+        return _post_chat_completion(payload, timeout=45)
+    except requests.exceptions.ConnectionError:
+        return "Groq API tidak bisa diakses. Cek koneksi internet."
+    except Exception as e:
+        return f"Error analisa chart: {e}"

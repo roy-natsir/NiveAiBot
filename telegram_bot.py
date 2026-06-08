@@ -8,7 +8,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from hermes_analyst import ask_hermes
+from hermes_analyst import analyze_chart_image, ask_chat, ask_hermes
 from indicators import calculate_indicators
 from market_data import CoinGeckoRateLimitError, get_ohlcv, get_ticker, search_coin
 
@@ -51,6 +51,39 @@ STOP_WORDS = {
     "harga",
     "price",
     "prediksi",
+}
+
+ANALYZE_WORDS = {
+    "analisa",
+    "analisis",
+    "analyze",
+    "cek",
+    "check",
+    "sinyal",
+    "signal",
+    "prediksi",
+}
+
+PRICE_WORDS = {"harga", "price"}
+
+MARKET_CONTEXT_WORDS = {
+    "sekarang",
+    "gimana",
+    "bagus",
+    "buy",
+    "sell",
+    "hold",
+    "entry",
+    "masuk",
+    "target",
+    "tp",
+    "sl",
+    "support",
+    "resistance",
+    "resisten",
+    "breakout",
+    "dump",
+    "pump",
 }
 
 COMMON_COINS = {
@@ -149,6 +182,65 @@ def resolve_coin(query: str) -> Tuple[Optional[str], Optional[str]]:
     return search_coin(query)
 
 
+def text_tokens(text: str) -> set:
+    return set(normalize_query(text).split())
+
+
+def has_common_coin(text: str) -> bool:
+    tokens = text_tokens(text)
+    return any(token in COMMON_COINS for token in tokens)
+
+
+def first_common_coin(text: str) -> Optional[str]:
+    for token in normalize_query(text).split():
+        if token in COMMON_COINS:
+            return token
+    return None
+
+
+def coin_query_from_text(text: str, fallback: str) -> str:
+    return first_common_coin(text) or fallback
+
+
+def is_price_request(text: str) -> bool:
+    tokens = text_tokens(text)
+    return bool(tokens & PRICE_WORDS) and has_common_coin(text)
+
+
+def should_run_market_analysis(text: str, query: str, timeframe: str) -> bool:
+    if not query:
+        return False
+
+    tokens = text_tokens(text)
+    query_tokens = query.split()
+
+    if tokens & ANALYZE_WORDS:
+        return True
+    if timeframe != DEFAULT_TIMEFRAME:
+        return True
+    if len(query_tokens) == 1 and query_tokens[0] in COMMON_COINS:
+        return True
+    if has_common_coin(text) and tokens & MARKET_CONTEXT_WORDS:
+        return True
+    if re.search(r"\$[A-Za-z0-9]{2,12}", text):
+        return True
+
+    return False
+
+
+def remember_chat(context: ContextTypes.DEFAULT_TYPE, user_text: str, ai_text: str) -> None:
+    history = context.user_data.setdefault("chat_history", [])
+    history.append({"role": "user", "content": user_text})
+    history.append({"role": "assistant", "content": ai_text})
+    del history[:-8]
+
+
+async def send_ai_text(message, text: str) -> None:
+    max_len = 3900
+    for start in range(0, len(text), max_len):
+        await message.reply_text(html.escape(text[start:start + max_len]), parse_mode=ParseMode.HTML)
+
+
 def format_price(symbol: str, ticker: dict) -> str:
     price = float(ticker.get("lastPrice", 0) or 0)
     change = float(ticker.get("priceChangePercent", 0) or 0)
@@ -212,8 +304,12 @@ Kirim nama coin untuk analisa:
 Command:
 <code>/price btc</code> - harga live dan perubahan 24h
 <code>/analyze btc 4h</code> - analisa teknikal + AI
+<code>/chat apa itu RSI?</code> - tanya jawab dengan AI analyst
 <code>/timeframes</code> - timeframe yang tersedia
 <code>/help</code> - bantuan
+
+Kirim foto chart dengan caption untuk analisa gambar.
+Contoh caption: <code>analisa chart BTC, cari support resistance</code>
 
 Timeframe: <code>1h</code>, <code>4h</code>, <code>1d</code>, <code>1w</code>
 """.strip()
@@ -264,6 +360,24 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await loading_msg.edit_text(f"Error: {exc}")
 
 
+async def chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_unauthorized(update):
+        return
+
+    question = " ".join(context.args).strip()
+    if not question:
+        await update.message.reply_text("Contoh: /chat apa itu RSI dan MACD?")
+        return
+
+    loading_msg = await update.message.reply_text("Hermes sedang berpikir...")
+    history = context.user_data.get("chat_history", [])
+    answer = ask_chat(question, history=history)
+    remember_chat(context, question, answer)
+
+    await loading_msg.delete()
+    await send_ai_text(update.message, answer)
+
+
 async def analyze_query(update: Update, query: str, timeframe: str):
     loading_msg = await update.message.reply_text(f"Mencari {query}...")
 
@@ -300,6 +414,29 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await analyze_query(update, query, timeframe)
 
 
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_unauthorized(update):
+        return
+
+    if not update.message.photo:
+        await update.message.reply_text("Kirim gambar chart yang jelas.")
+        return
+
+    caption = update.message.caption or ""
+    loading_msg = await update.message.reply_text("Menganalisa chart dari gambar...")
+
+    try:
+        photo = update.message.photo[-1]
+        telegram_file = await photo.get_file()
+        image_bytes = bytes(await telegram_file.download_as_bytearray())
+        result = analyze_chart_image(image_bytes, caption)
+
+        await loading_msg.delete()
+        await send_ai_text(update.message, result)
+    except Exception as exc:
+        await loading_msg.edit_text(f"Error analisa chart: {exc}")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_unauthorized(update):
         return
@@ -311,7 +448,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(help_text(), parse_mode=ParseMode.HTML)
         return
 
-    await analyze_query(update, query, timeframe)
+    if is_price_request(text):
+        coin_query = coin_query_from_text(text, query)
+        loading_msg = await update.message.reply_text(f"Mencari harga {coin_query}...")
+        try:
+            coin_id, coin_name = resolve_coin(coin_query)
+            if not coin_id:
+                await loading_msg.edit_text(f"Coin '{coin_query}' tidak ditemukan di CoinGecko.")
+                return
+            await loading_msg.edit_text(format_price(coin_name, get_ticker(coin_id)), parse_mode=ParseMode.HTML)
+        except CoinGeckoRateLimitError as exc:
+            await loading_msg.edit_text(str(exc))
+        except Exception as exc:
+            await loading_msg.edit_text(f"Error: {exc}")
+        return
+
+    if should_run_market_analysis(text, query, timeframe):
+        await analyze_query(update, coin_query_from_text(text, query), timeframe)
+        return
+
+    loading_msg = await update.message.reply_text("Hermes sedang berpikir...")
+    history = context.user_data.get("chat_history", [])
+    answer = ask_chat(text, history=history)
+    remember_chat(context, text, answer)
+
+    await loading_msg.delete()
+    await send_ai_text(update.message, answer)
 
 
 def main():
@@ -329,6 +491,9 @@ def main():
     app.add_handler(CommandHandler("timeframes", timeframes_command))
     app.add_handler(CommandHandler("price", price_command))
     app.add_handler(CommandHandler("analyze", analyze_command))
+    app.add_handler(CommandHandler("chat", chat_command))
+    app.add_handler(CommandHandler("ask", chat_command))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("Bot berjalan. Tekan Ctrl+C untuk stop.")
