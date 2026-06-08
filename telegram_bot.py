@@ -3,7 +3,7 @@ import asyncio
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
-from market_data import get_ohlcv, get_ticker, search_coin
+from market_data import CoinGeckoRateLimitError, get_ohlcv, search_coin
 from indicators import calculate_indicators
 from hermes_analyst import ask_hermes
 
@@ -121,14 +121,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await loading_msg.edit_text(f"⏳ Menganalisa {coin_name} ({timeframe})...")
         df = get_ohlcv(coin_id, timeframe, 100)
         indicators = calculate_indicators(df)
-        ticker = get_ticker(coin_id)
-        live_price = float(ticker.get("lastPrice", indicators["current_price"]))
         analysis = ask_hermes(coin_id.upper()+"/USDT", timeframe, indicators)
-        result = format_signal(coin_name, timeframe, indicators, analysis, live_price)
+        result = format_signal(coin_name, timeframe, indicators, analysis)
 
         await loading_msg.delete()
         await update.message.reply_text(result, parse_mode="Markdown")
 
+    except CoinGeckoRateLimitError as e:
+        await loading_msg.edit_text(f"âš ï¸ {str(e)}")
     except Exception as e:
         await loading_msg.edit_text(f"❌ Error: {str(e)}")
 
