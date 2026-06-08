@@ -3,7 +3,7 @@ import asyncio
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
-from market_data import CoinGeckoRateLimitError, get_ohlcv, search_coin
+from market_data import CoinGeckoRateLimitError, get_ohlcv, get_ticker, search_coin
 from indicators import calculate_indicators
 from hermes_analyst import ask_hermes
 
@@ -94,6 +94,17 @@ def format_signal(symbol: str, timeframe: str, indicators: dict, analysis: dict)
 _Bukan financial advice. DYOR._
 """
 
+def apply_live_price(indicators: dict, ticker: dict) -> dict:
+    live_price = float(ticker.get("lastPrice", 0) or 0)
+    price_change = float(ticker.get("priceChangePercent", 0) or 0)
+
+    if live_price > 0:
+        indicators = indicators.copy()
+        indicators["current_price"] = live_price
+        indicators["price_change_pct"] = round(price_change, 3)
+
+    return indicators
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ALLOWED_USER_ID:
@@ -121,6 +132,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await loading_msg.edit_text(f"⏳ Menganalisa {coin_name} ({timeframe})...")
         df = get_ohlcv(coin_id, timeframe, 100)
         indicators = calculate_indicators(df)
+        ticker = get_ticker(coin_id)
+        indicators = apply_live_price(indicators, ticker)
         analysis = ask_hermes(coin_id.upper()+"/USDT", timeframe, indicators)
         result = format_signal(coin_name, timeframe, indicators, analysis)
 
