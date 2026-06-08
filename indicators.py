@@ -16,13 +16,12 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
     df["ema_20"] = ta.trend.EMAIndicator(df["close"], window=20).ema_indicator()
     df["ema_50"] = ta.trend.EMAIndicator(df["close"], window=50).ema_indicator()
 
-   latest = df.iloc[-1]
+    latest = df.iloc[-1]
     prev = df.iloc[-2]
 
     vol_latest = float(latest["volume"])
     vol_prev = float(prev["volume"])
-    
-    # Hindari division by zero
+
     price_change = 0.0
     if float(prev["close"]) != 0:
         price_change = round(
