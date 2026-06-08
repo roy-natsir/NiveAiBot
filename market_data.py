@@ -192,6 +192,7 @@ def get_price_summary(coin_id: str) -> dict:
     latest_timestamp = int(prices_1d[-1][0]) if prices_1d else int(time.time() * 1000)
 
     changes = {
+        "24H": round(float(ticker.get("priceChangePercent", 0) or 0), 3),
         "15m": _percent_change(
             current_price,
             _price_before(prices_1d, latest_timestamp - 15 * 60 * 1000),
@@ -204,7 +205,10 @@ def get_price_summary(coin_id: str) -> dict:
             current_price,
             _price_before(prices_1d, latest_timestamp - 4 * 60 * 60 * 1000),
         ),
-        "1D": round(float(ticker.get("priceChangePercent", 0) or 0), 3),
+        "1D": _percent_change(
+            current_price,
+            _price_before(prices_1d, latest_timestamp - 24 * 60 * 60 * 1000),
+        ),
         "7D": _percent_change(
             current_price,
             _price_before(prices_7d, latest_timestamp - 7 * 24 * 60 * 60 * 1000),
