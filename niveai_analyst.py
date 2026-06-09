@@ -9,9 +9,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 GROQ_CHAT_MODEL = os.getenv("GROQ_CHAT_MODEL", GROQ_MODEL)
-GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "")
+GROQ_VISION_MODEL = (
+    os.getenv("GROQ_VISION_MODEL")
+    or os.getenv("GROQ_VISON_MODEL")
+    or "meta-llama/llama-4-scout-17b-16e-instruct"
+)
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
@@ -190,12 +194,6 @@ def ask_chat(question: str, history: Optional[List[dict]] = None) -> str:
 
 
 def analyze_chart_image(image_bytes: bytes, question: str = "") -> str:
-    if not GROQ_VISION_MODEL:
-        return (
-            "Mode analisa chart gambar belum aktif. Isi GROQ_VISION_MODEL di .env "
-            "dengan model vision Groq yang tersedia, lalu restart bot."
-        )
-
     prompt = question.strip() or (
         "Analisa chart/candle ini. Baca timeframe, pair, struktur trend, candle penting, "
         "support/resistance, volume, dan indikator yang terlihat seperti RSI, MACD, EMA/MA, "
@@ -205,7 +203,7 @@ def analyze_chart_image(image_bytes: bytes, question: str = "") -> str:
     )
 
     encoded = base64.b64encode(image_bytes).decode("ascii")
-    if len(encoded) > 4 * 1024 * 1024:
+    if len(encoded) > 20 * 1024 * 1024:
         return "Gambar terlalu besar untuk Groq Vision. Kirim screenshot chart yang lebih kecil/terkompres."
 
     payload = {

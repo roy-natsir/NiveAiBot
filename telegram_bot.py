@@ -171,18 +171,16 @@ def format_number(value: float, decimals: int = 6) -> str:
     return f"{value:,.{decimals}f}".rstrip("0").rstrip(".")
 
 
-def format_compact_usd(value) -> str:
-    value = float(value or 0)
-    abs_value = abs(value)
-    if abs_value >= 1_000_000_000_000:
-        return f"${value / 1_000_000_000_000:.2f}T"
-    if abs_value >= 1_000_000_000:
-        return f"${value / 1_000_000_000:.2f}B"
-    if abs_value >= 1_000_000:
-        return f"${value / 1_000_000:.2f}M"
-    if abs_value >= 1_000:
-        return f"${value / 1_000:.2f}K"
-    return f"${format_number(value)}"
+def format_usd_price(value) -> str:
+    if value is None:
+        return "-"
+    return f"${format_number(float(value))}"
+
+
+def format_usd_integer(value) -> str:
+    if value is None:
+        return "-"
+    return f"${float(value):,.0f}"
 
 
 def format_percent(value: float) -> str:
@@ -302,17 +300,17 @@ async def send_ai_text(message, text: str) -> None:
 
 
 def format_price_snapshot(coin_name: str, symbol: str, summary: dict) -> str:
-    price = float(summary.get("lastPrice", 0) or 0)
-    high = float(summary.get("high24h") or 0)
-    low = float(summary.get("low24h") or 0)
+    price = summary.get("lastPrice")
+    high = summary.get("high24h")
+    low = summary.get("low24h")
     market_cap = summary.get("marketCap")
     volume = summary.get("volume24h")
     changes = summary.get("changes", {})
 
     lines = [
         f"<b>{html.escape(coin_name)} ${html.escape(symbol)}</b>",
-        f"Harga <code>${format_number(price)}</code>",
-        f"High | Low: <code>${format_number(high)}</code> | <code>${format_number(low)}</code>",
+        f"Harga <code>{format_usd_price(price)}</code>",
+        f"High | Low: <code>{format_usd_price(high)}</code> | <code>{format_usd_price(low)}</code>",
         "",
     ]
 
@@ -323,8 +321,8 @@ def format_price_snapshot(coin_name: str, symbol: str, summary: dict) -> str:
     lines.extend(
         [
             "",
-            f"MCap: <code>{format_compact_usd(market_cap)}</code>",
-            f"Vol: <code>{format_compact_usd(volume)}</code>",
+            f"MCap: <code>{format_usd_integer(market_cap)}</code>",
+            f"Vol: <code>{format_usd_integer(volume)}</code>",
         ]
     )
 

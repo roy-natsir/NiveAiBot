@@ -15,6 +15,7 @@ SEARCH_CACHE_TTL = 60 * 60 * 24
 OHLCV_CACHE_TTL = 60 * 5
 TICKER_CACHE_TTL = 5
 MARKET_OVERVIEW_CACHE_TTL = 5
+COIN_DETAIL_CACHE_TTL = 5
 MARKET_CHART_1D_CACHE_TTL = 60
 MARKET_CHART_7D_CACHE_TTL = 60 * 5
 MAX_RETRIES = 3
@@ -209,14 +210,49 @@ def get_market_overview(coin_id: str, force_refresh: bool = False) -> dict:
     return data[0]
 
 
+def _usd_value(data: dict, key: str):
+    value = data.get(key, {})
+    if isinstance(value, dict):
+        return value.get("usd")
+    return None
+
+
+def get_coin_market_data(coin_id: str, force_refresh: bool = False) -> dict:
+    data = _request_json(
+        f"/coins/{coin_id}",
+        {
+            "localization": "false",
+            "tickers": "false",
+            "market_data": "true",
+            "community_data": "false",
+            "developer_data": "false",
+            "sparkline": "false",
+        },
+        ("coin_detail", coin_id),
+        COIN_DETAIL_CACHE_TTL,
+        force_refresh=force_refresh,
+    )
+    market_data = data.get("market_data", {})
+
+    return {
+        "currentPrice": _usd_value(market_data, "current_price"),
+        "high24h": _usd_value(market_data, "high_24h"),
+        "low24h": _usd_value(market_data, "low_24h"),
+        "marketCap": _usd_value(market_data, "market_cap"),
+        "volume24h": _usd_value(market_data, "total_volume"),
+        "priceChange24h": market_data.get("price_change_percentage_24h"),
+        "priceChange7d": market_data.get("price_change_percentage_7d"),
+        "lastUpdatedAt": data.get("last_updated"),
+    }
+
+
 def get_price_summary(coin_id: str, force_live: bool = False) -> dict:
-    ticker = get_ticker(coin_id, force_refresh=force_live)
-    overview = get_market_overview(coin_id, force_refresh=force_live)
-    current_price = float(overview.get("current_price") or ticker.get("lastPrice", 0) or 0)
+    detail = get_coin_market_data(coin_id, force_refresh=force_live)
+    current_price = float(detail.get("currentPrice") or 0)
 
     prices_1d = get_market_chart_prices(coin_id, 1)
-    prices_7d = get_market_chart_prices(coin_id, 7)
     latest_timestamp = int(prices_1d[-1][0]) if prices_1d else int(time.time() * 1000)
+    price_change_7d = detail.get("priceChange7d")
 
     changes = {
         "15m": _percent_change(
@@ -231,25 +267,19 @@ def get_price_summary(coin_id: str, force_live: bool = False) -> dict:
             current_price,
             _price_before(prices_1d, latest_timestamp - 4 * 60 * 60 * 1000),
         ),
-        "1D": round(
-            float(overview.get("price_change_percentage_24h") or ticker.get("priceChangePercent", 0) or 0),
-            3,
-        ),
-        "7D": round(
-            float(overview.get("price_change_percentage_7d_in_currency") or 0),
-            3,
-        ) if overview.get("price_change_percentage_7d_in_currency") is not None else _percent_change(
+        "1D": round(float(detail.get("priceChange24h") or 0), 3),
+        "7D": round(float(price_change_7d), 3) if price_change_7d is not None else _percent_change(
             current_price,
-            _price_before(prices_7d, latest_timestamp - 7 * 24 * 60 * 60 * 1000),
+            _price_before(get_market_chart_prices(coin_id, 7), latest_timestamp - 7 * 24 * 60 * 60 * 1000),
         ),
     }
 
     return {
         "lastPrice": current_price,
-        "high24h": overview.get("high_24h"),
-        "low24h": overview.get("low_24h"),
-        "marketCap": overview.get("market_cap"),
-        "volume24h": overview.get("total_volume"),
-        "lastUpdatedAt": overview.get("last_updated") or ticker.get("lastUpdatedAt"),
+        "high24h": detail.get("high24h"),
+        "low24h": detail.get("low24h"),
+        "marketCap": detail.get("marketCap"),
+        "volume24h": detail.get("volume24h"),
+        "lastUpdatedAt": detail.get("lastUpdatedAt"),
         "changes": changes,
     }
