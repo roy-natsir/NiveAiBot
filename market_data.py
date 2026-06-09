@@ -14,6 +14,7 @@ TIMEFRAME_MAP = {
 SEARCH_CACHE_TTL = 60 * 60 * 24
 OHLCV_CACHE_TTL = 60 * 5
 TICKER_CACHE_TTL = 5
+MARKET_OVERVIEW_CACHE_TTL = 5
 MARKET_CHART_1D_CACHE_TTL = 60
 MARKET_CHART_7D_CACHE_TTL = 60 * 5
 MAX_RETRIES = 3
@@ -191,16 +192,33 @@ def get_market_chart_prices(coin_id: str, days: int) -> list:
     return data.get("prices", [])
 
 
+def get_market_overview(coin_id: str, force_refresh: bool = False) -> dict:
+    data = _request_json(
+        "/coins/markets",
+        {
+            "vs_currency": "usd",
+            "ids": coin_id,
+            "price_change_percentage": "24h,7d",
+        },
+        ("market_overview", coin_id),
+        MARKET_OVERVIEW_CACHE_TTL,
+        force_refresh=force_refresh,
+    )
+    if not data:
+        return {}
+    return data[0]
+
+
 def get_price_summary(coin_id: str, force_live: bool = False) -> dict:
     ticker = get_ticker(coin_id, force_refresh=force_live)
-    current_price = float(ticker.get("lastPrice", 0) or 0)
+    overview = get_market_overview(coin_id, force_refresh=force_live)
+    current_price = float(overview.get("current_price") or ticker.get("lastPrice", 0) or 0)
 
     prices_1d = get_market_chart_prices(coin_id, 1)
     prices_7d = get_market_chart_prices(coin_id, 7)
     latest_timestamp = int(prices_1d[-1][0]) if prices_1d else int(time.time() * 1000)
 
     changes = {
-        "24H": round(float(ticker.get("priceChangePercent", 0) or 0), 3),
         "15m": _percent_change(
             current_price,
             _price_before(prices_1d, latest_timestamp - 15 * 60 * 1000),
@@ -213,11 +231,14 @@ def get_price_summary(coin_id: str, force_live: bool = False) -> dict:
             current_price,
             _price_before(prices_1d, latest_timestamp - 4 * 60 * 60 * 1000),
         ),
-        "1D": _percent_change(
-            current_price,
-            _price_before(prices_1d, latest_timestamp - 24 * 60 * 60 * 1000),
+        "1D": round(
+            float(overview.get("price_change_percentage_24h") or ticker.get("priceChangePercent", 0) or 0),
+            3,
         ),
-        "7D": _percent_change(
+        "7D": round(
+            float(overview.get("price_change_percentage_7d_in_currency") or 0),
+            3,
+        ) if overview.get("price_change_percentage_7d_in_currency") is not None else _percent_change(
             current_price,
             _price_before(prices_7d, latest_timestamp - 7 * 24 * 60 * 60 * 1000),
         ),
@@ -225,6 +246,10 @@ def get_price_summary(coin_id: str, force_live: bool = False) -> dict:
 
     return {
         "lastPrice": current_price,
-        "lastUpdatedAt": ticker.get("lastUpdatedAt"),
+        "high24h": overview.get("high_24h"),
+        "low24h": overview.get("low_24h"),
+        "marketCap": overview.get("market_cap"),
+        "volume24h": overview.get("total_volume"),
+        "lastUpdatedAt": overview.get("last_updated") or ticker.get("lastUpdatedAt"),
         "changes": changes,
     }

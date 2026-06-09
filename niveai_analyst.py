@@ -197,8 +197,10 @@ def analyze_chart_image(image_bytes: bytes, question: str = "") -> str:
         )
 
     prompt = question.strip() or (
-        "Analisa chart ini. Jelaskan trend, support/resistance yang terlihat, momentum, "
-        "skenario bullish/bearish, invalidation, dan risk management. Jangan mengarang angka "
+        "Analisa chart/candle ini. Baca timeframe, pair, struktur trend, candle penting, "
+        "support/resistance, volume, dan indikator yang terlihat seperti RSI, MACD, EMA/MA, "
+        "Bollinger Bands, VWAP, Fibonacci, atau indikator lain di chart. Jelaskan skenario "
+        "bullish/bearish, area invalidation, dan risk management. Jangan mengarang angka "
         "yang tidak terlihat jelas dari gambar."
     )
 
@@ -213,8 +215,11 @@ def analyze_chart_image(image_bytes: bytes, question: str = "") -> str:
                 "role": "system",
                 "content": (
                     "You are NiveAI, an Indonesian crypto chart analyst. Analyze visible chart images carefully. "
-                    "If price labels, timeframe, or indicators are unclear, say so. Do not claim certainty. "
-                    "Give practical scenarios and risk notes. This is not financial advice."
+                    "Read candlestick structure, trend, support/resistance, volume, and any visible indicators "
+                    "such as RSI, MACD, EMA/MA, Bollinger Bands, VWAP, Fibonacci, order blocks, or divergence. "
+                    "If price labels, timeframe, indicator values, or candle details are unclear, say so instead "
+                    "of guessing. Give practical scenarios, invalidation levels, and risk notes. This is not "
+                    "financial advice."
                 ),
             },
             {

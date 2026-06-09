@@ -1,7 +1,6 @@
 import html
 import os
 import re
-from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 from dotenv import load_dotenv
@@ -172,6 +171,20 @@ def format_number(value: float, decimals: int = 6) -> str:
     return f"{value:,.{decimals}f}".rstrip("0").rstrip(".")
 
 
+def format_compact_usd(value) -> str:
+    value = float(value or 0)
+    abs_value = abs(value)
+    if abs_value >= 1_000_000_000_000:
+        return f"${value / 1_000_000_000_000:.2f}T"
+    if abs_value >= 1_000_000_000:
+        return f"${value / 1_000_000_000:.2f}B"
+    if abs_value >= 1_000_000:
+        return f"${value / 1_000_000:.2f}M"
+    if abs_value >= 1_000:
+        return f"${value / 1_000:.2f}K"
+    return f"${format_number(value)}"
+
+
 def format_percent(value: float) -> str:
     value = float(value)
     sign = "+" if value > 0 else ""
@@ -199,16 +212,6 @@ def change_emoji(value: float) -> str:
     if value > 0:
         return "🤨"
     return "😮‍💨"
-
-
-def format_updated_at(timestamp) -> str:
-    if not timestamp:
-        return "unknown"
-    try:
-        updated_at = datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
-    except (TypeError, ValueError, OSError):
-        return "unknown"
-    return updated_at.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def resolve_common_coin(query: str) -> Tuple[Optional[str], Optional[str]]:
@@ -300,18 +303,30 @@ async def send_ai_text(message, text: str) -> None:
 
 def format_price_snapshot(coin_name: str, symbol: str, summary: dict) -> str:
     price = float(summary.get("lastPrice", 0) or 0)
+    high = float(summary.get("high24h") or 0)
+    low = float(summary.get("low24h") or 0)
+    market_cap = summary.get("marketCap")
+    volume = summary.get("volume24h")
     changes = summary.get("changes", {})
-    updated_at = format_updated_at(summary.get("lastUpdatedAt"))
 
     lines = [
         f"<b>{html.escape(coin_name)} ${html.escape(symbol)}</b>",
         f"Harga <code>${format_number(price)}</code>",
-        f"Update <code>{html.escape(updated_at)}</code>",
+        f"High | Low: <code>${format_number(high)}</code> | <code>${format_number(low)}</code>",
+        "",
     ]
 
-    for label in ("24H", "15m", "1h", "4h", "1D", "7D"):
+    for label in ("15m", "1h", "4h", "1D", "7D"):
         value = float(changes.get(label, 0) or 0)
         lines.append(f"{label} {change_emoji(value)} <code>{format_percent(value)}</code>")
+
+    lines.extend(
+        [
+            "",
+            f"MCap: <code>{format_compact_usd(market_cap)}</code>",
+            f"Vol: <code>{format_compact_usd(volume)}</code>",
+        ]
+    )
 
     return "\n".join(lines)
 
